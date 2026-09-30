@@ -1,18 +1,23 @@
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, makeCacheableSignalKeyStore } = require("@whiskeysockets/baileys")
 const P = require("pino")
 const fs = require("fs")
+const express = require("express")
 
-const OWNER = "233559493860@s.whatsapp.net"
-const GROUP_NAME = "AZIGI STORE HOUSE"
-const WARNING_FILE = "./warnings.json"
+const app = express()
+app.get("/", (req,res)=> res.send("Azigi Bot - Unlimited Login Active"))
+app.listen(process.env.PORT || 3000, ()=> console.log("Server alive"))
 
-// Load warnings
 let warnings = {}
-if (fs.existsSync(WARNING_FILE)) {
-  try { warnings = JSON.parse(fs.readFileSync(WARNING_FILE)) } catch(e){ warnings = {} }
-}
-function saveWarnings() {
-  fs.writeFileSync(WARNING_FILE, JSON.stringify(warnings))
+if (fs.existsSync("./warnings.json")) { try { warnings = JSON.parse(fs.readFileSync("./warnings.json")) } catch(e){} }
+const save = () => fs.writeFileSync("./warnings.json", JSON.stringify(warnings))
+
+// --- UNLIMITED LOGIN FIX ---
+// If you set SESSION_ID in Render env, it will restore login automatically
+if (process.env.SESSION_ID) {
+  console.log("Restoring session from ENV...")
+  if (!fs.existsSync("./auth")) fs.mkdirSync("./auth", {recursive:true})
+  const sessionData = JSON.parse(Buffer.from(process.env.SESSION_ID, "base64").toString())
+  fs.writeFileSync("./auth/creds.json", JSON.stringify(sessionData, null, 2))
 }
 
 async function start() {
@@ -22,98 +27,93 @@ async function start() {
     version,
     auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, P().child({ level: "silent" })) },
     logger: P({ level: "silent" }),
-    browser: ["Ubuntu", "Chrome", "22.04"]
+    browser: ["Azigi Store House", "Chrome", "1.0"],
+    markOnlineOnConnect: true,
+    syncFullHistory: false
   })
-  sock.ev.on("creds.update", saveCreds)
+  sock.ev.on("creds.update", async () => {
+    await saveCreds()
+    // AFTER LOGIN, PRINT YOUR PERMANENT SESSION CODE
+    try {
+      if (fs.existsSync("./auth/creds.json")) {
+        const data = fs.readFileSync("./auth/creds.json")
+        const b64 = Buffer.from(data).toString("base64")
+        console.log("\n=== YOUR PERMANENT SESSION_ID (Copy this to Render ENV) ===")
+        console.log(b64)
+        console.log("=== END SESSION_ID ===\n")
+      }
+    } catch(e){}
+  })
 
   if (!sock.authState.creds.registered) {
-    setTimeout(async () => {
+    setTimeout(async()=>{
       const code = await sock.requestPairingCode("233559493860")
-      console.log(`PAIRING CODE: ${code}`)
-    }, 5000)
+      console.log(`\n=== PAIRING CODE FOR 0559493860: ${code} ===\n`)
+    },3000)
   }
-
-  sock.ev.on("connection.update", (u) => {
-    if (u.connection === "close" && u.lastDisconnect?.error?.output?.statusCode!== DisconnectReason.loggedOut) start()
-    if (u.connection === "open") console.log(`${GROUP_NAME} BOT ONLINE`)
-  })
-
-  // WELCOME MESSAGE
-  sock.ev.on("group-participants.update", async (u) => {
-    for (const p of u.participants) {
-      if (u.action === "add") {
-        await sock.sendMessage(u.id, {
-          text: `welcome to azigi store house @${p.split("@")[0]} 🛍️\n\nWe sell affordable data & more!\nMoMo: 0559493860\n\nNo links / No advertising allowed!`,
-          mentions: [p]
-        })
-      }
+  sock.ev.on("connection.update", u=>{
+    if(u.connection==="close" && u.lastDisconnect?.error?.output?.statusCode!==DisconnectReason.loggedOut) start()
+    if(u.connection==="open") {
+      console.log("AZIGI BOT ONLINE - UNLIMITED LOGIN ACTIVE")
     }
   })
 
-  // AUTO-APPROVE
-  sock.ev.on("group-membership-requests.update", async (u) => {
-    for (const r of u.requests) {
-      await sock.groupRequestParticipantsUpdate(u.id, [r.jid], "approve")
+  sock.ev.on("group-participants.update", async u=>{
+    for(const p of u.participants) if(u.action==="add"){
+      await sock.sendMessage(u.id,{text:`welcome to azigi store house @${p.split("@")[0]} 🎓`,mentions:[p]})
     }
   })
+  sock.ev.on("group-membership-requests.update", async u=>{
+    for(const r of u.requests) await sock.groupRequestParticipantsUpdate(u.id,[r.jid],"approve")
+  })
 
-  // MAIN FILTER - LINKS + MINUTES/GH
-  sock.ev.on("messages.upsert", async ({ messages }) => {
+  sock.ev.on("messages.upsert", async ({messages})=>{
     const m = messages[0]
-    if (!m.message ||!m.key.remoteJid.endsWith("@g.us") || m.key.fromMe) return
-
+    if(!m.message || m.key.fromMe ||!m.key.remoteJid.endsWith("@g.us")) return
     const jid = m.key.remoteJid
     const sender = m.key.participant
-    const text = (m.message.conversation || m.message.extendedTextMessage?.text || m.message.imageMessage?.caption || "").toLowerCase()
+    const msgType = Object.keys(m.message)[0]
+    const isMedia = ["imageMessage","videoMessage","documentMessage"].includes(msgType)
+    const text = (m.message.conversation || m.message.extendedTextMessage?.text || m.message.imageMessage?.caption || m.message.videoMessage?.caption || "").toLowerCase()
+    const hasLink = /https?:\/\/|www\.|chat\.whatsapp\.com|wa\.me|t\.me|bit\.ly/i.test(text)
+    const isYoutube = /youtube\.com|youtu\.be/i.test(text)
+    const hasPhone = /(0[235][0-9]{8}|\+233[0-9]{9})/i.test(text)
+    const hasLocation = /(location|kaneshie|cocoa|clinic|my place|host|hotel|come to|junction)/i.test(text)
+    const hasHookup = /(hookup|sex|nude|raw|bj|doggy|romance|escort)/i.test(text)
+    const hasDataSell = /\d/.test(text) && /(gb|bundle|data|mins)/i.test(text) && /(gh|cedi|₵)/i.test(text)
+    const hasSpiritual = /(spiritual|mallam|juju|sakawa|money ritual|lotto|lottery|native doctor|charm|instant money)/i.test(text)
+    const hasPorn = /(porn|xxx|sex video|blue film)/i.test(text)
 
-    if (!text) return
+    let shouldDelete = false; let reason = ""
+    if (isMedia) {
+      if (hasPhone && hasLocation) { shouldDelete = true; reason = "Media with phone + location" }
+      else if (hasHookup || hasPorn) { shouldDelete = true; reason = "Hookup/Porn media" }
+      else if (hasSpiritual) { shouldDelete = true; reason = "Spiritual spam on media" }
+      else if (hasDataSell) { shouldDelete = true; reason = "Data selling on media" }
+      else if (hasLink &&!isYoutube) { shouldDelete = true; reason = "Non-tutorial link" }
+    } else {
+      if (hasLink &&!isYoutube) { shouldDelete = true; reason = "Links (only YouTube allowed)" }
+      else if (hasPhone && hasLocation) { shouldDelete = true; reason = "Hookup ad" }
+      else if (hasHookup || hasPorn) { shouldDelete = true; reason = "Adult content" }
+      else if (hasSpiritual) { shouldDelete = true; reason = "Spiritual/mallam spam" }
+      else if (hasDataSell) { shouldDelete = true; reason = "Data selling" }
+    }
 
-    // Check 1: LINKS
-    const hasLink = /https?:\/\/|www\.|chat\.whatsapp\.com|wa\.me|t\.me|bit\.ly|tinyurl/.test(text)
-
-    // Check 2: DATA SELLING (minutes + GH/Cedis)
-    // Detects: "2gb for 12gh", "10 mins 5gh", "1gb 6 cedis", "5gb - 30gh"
-    const hasDataSelling = /\d/.test(text) &&
-                           /(gb|gig|mins?|minutes?|data|bundle)/.test(text) &&
-                           /(gh|ghs|cedi|₵|ghc)/.test(text)
-
-    if (hasLink || hasDataSelling) {
+    if (shouldDelete) {
       try {
-        // Check if bot is admin
         const meta = await sock.groupMetadata(jid)
-        const botIsAdmin = meta.participants.find(p => p.id === sock.user.id)?.admin
-        if (!botIsAdmin) return
-
-        // Delete message from everyone
+        if (!meta.participants.find(p=>p.id===sock.user.id)?.admin) return
         await sock.sendMessage(jid, { delete: m.key })
-
-        // Warning system
         if (!warnings[sender]) warnings[sender] = 0
-        warnings[sender] += 1
-        saveWarnings()
-
-        const count = warnings[sender]
-
-        if (count < 3) {
-          let reason = hasLink? "Posting links" : "Advertising data/minutes for GH"
-          await sock.sendMessage(jid, {
-            text: `⚠️ @${sender.split("@")[0]} WARNING ${count}/3\nReason: ${reason}\nYour message was deleted. After 3 warnings you will be removed!\n\n@${GROUP_NAME} - No advertising!`,
-            mentions: [sender]
-          })
-          await sock.sendMessage(OWNER, { text: `⚠️ Warning ${count}/3 to ${sender} in ${jid}\nReason: ${reason}\nText: ${text}` })
+        warnings[sender]++; save()
+        if (warnings[sender] < 3) {
+          await sock.sendMessage(jid, { text: `⚠️ @${sender.split("@")[0]} WARNING ${warnings[sender]}/3\nReason: ${reason}`, mentions: [sender] })
         } else {
-          // 3rd warning = REMOVE
-          await sock.sendMessage(jid, {
-            text: `🚫 @${sender.split("@")[0]} REMOVED after 3 warnings!\nReason: Repeated advertising/links`,
-            mentions: [sender]
-          })
+          await sock.sendMessage(jid, { text: `🚫 @${sender.split("@")[0]} REMOVED after 3 warnings`, mentions: [sender] })
           await sock.groupParticipantsUpdate(jid, [sender], "remove")
-          await sock.sendMessage(OWNER, { text: `🚫 REMOVED ${sender} from ${jid} after 3 warnings\nLast text: ${text}` })
-          delete warnings[sender]
-          saveWarnings()
+          delete warnings[sender]; save()
         }
-
-      } catch(e){ console.log("delete error", e) }
+      } catch(e){}
     }
   })
 }
