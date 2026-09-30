@@ -1,0 +1,1 @@
+Use the full monitor code I sent you last message (the one with OWNER = 233559493860@s.whatsapp.net)
