@@ -1,23 +1,22 @@
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, makeCacheableSignalKeyStore } = require("@whiskeysockets/baileys")
 const P = require("pino")
 const fs = require("fs")
-const express = require("express")
+const http = require("http")
 
-const app = express()
-app.get("/", (req,res)=> res.send("Azigi Bot - Unlimited Login Active"))
-app.listen(process.env.PORT || 3000, ()=> console.log("Server alive"))
+// Simple server to keep Render alive (no express needed)
+http.createServer((req,res)=> res.end("Azigi IT Bot Online - Unlimited Login")).listen(process.env.PORT || 3000, ()=> console.log("Server alive"))
 
 let warnings = {}
 if (fs.existsSync("./warnings.json")) { try { warnings = JSON.parse(fs.readFileSync("./warnings.json")) } catch(e){} }
 const save = () => fs.writeFileSync("./warnings.json", JSON.stringify(warnings))
 
-// --- UNLIMITED LOGIN FIX ---
-// If you set SESSION_ID in Render env, it will restore login automatically
 if (process.env.SESSION_ID) {
   console.log("Restoring session from ENV...")
   if (!fs.existsSync("./auth")) fs.mkdirSync("./auth", {recursive:true})
-  const sessionData = JSON.parse(Buffer.from(process.env.SESSION_ID, "base64").toString())
-  fs.writeFileSync("./auth/creds.json", JSON.stringify(sessionData, null, 2))
+  try {
+    const sessionData = JSON.parse(Buffer.from(process.env.SESSION_ID, "base64").toString())
+    fs.writeFileSync("./auth/creds.json", JSON.stringify(sessionData, null, 2))
+  } catch(e){ console.log("SESSION_ID invalid") }
 }
 
 async function start() {
@@ -27,18 +26,15 @@ async function start() {
     version,
     auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, P().child({ level: "silent" })) },
     logger: P({ level: "silent" }),
-    browser: ["Azigi Store House", "Chrome", "1.0"],
-    markOnlineOnConnect: true,
-    syncFullHistory: false
+    browser: ["Azigi Store House", "Chrome", "1.0"]
   })
   sock.ev.on("creds.update", async () => {
     await saveCreds()
-    // AFTER LOGIN, PRINT YOUR PERMANENT SESSION CODE
     try {
       if (fs.existsSync("./auth/creds.json")) {
         const data = fs.readFileSync("./auth/creds.json")
         const b64 = Buffer.from(data).toString("base64")
-        console.log("\n=== YOUR PERMANENT SESSION_ID (Copy this to Render ENV) ===")
+        console.log("\n=== YOUR PERMANENT SESSION_ID (Copy to Render ENV) ===")
         console.log(b64)
         console.log("=== END SESSION_ID ===\n")
       }
@@ -48,19 +44,17 @@ async function start() {
   if (!sock.authState.creds.registered) {
     setTimeout(async()=>{
       const code = await sock.requestPairingCode("233559493860")
-      console.log(`\n=== PAIRING CODE FOR 0559493860: ${code} ===\n`)
+      console.log(`\n=== PAIRING CODE: ${code} ===\n`)
     },3000)
   }
   sock.ev.on("connection.update", u=>{
     if(u.connection==="close" && u.lastDisconnect?.error?.output?.statusCode!==DisconnectReason.loggedOut) start()
-    if(u.connection==="open") {
-      console.log("AZIGI BOT ONLINE - UNLIMITED LOGIN ACTIVE")
-    }
+    if(u.connection==="open") console.log("AZIGI BOT ONLINE - UNLIMITED")
   })
 
   sock.ev.on("group-participants.update", async u=>{
     for(const p of u.participants) if(u.action==="add"){
-      await sock.sendMessage(u.id,{text:`welcome to azigi store house @${p.split("@")[0]} 🎓`,mentions:[p]})
+      await sock.sendMessage(u.id,{text:`welcome to azigi store house @${p.split("@")[0]} 🎓\nIT Education: share tutorials, coding videos, screenshots`,mentions:[p]})
     }
   })
   sock.ev.on("group-membership-requests.update", async u=>{
@@ -79,17 +73,17 @@ async function start() {
     const isYoutube = /youtube\.com|youtu\.be/i.test(text)
     const hasPhone = /(0[235][0-9]{8}|\+233[0-9]{9})/i.test(text)
     const hasLocation = /(location|kaneshie|cocoa|clinic|my place|host|hotel|come to|junction)/i.test(text)
-    const hasHookup = /(hookup|sex|nude|raw|bj|doggy|romance|escort)/i.test(text)
+    const hasHookup = /(hookup|sex|nude|raw|bj|doggy|romance|escort|prostitute)/i.test(text)
     const hasDataSell = /\d/.test(text) && /(gb|bundle|data|mins)/i.test(text) && /(gh|cedi|₵)/i.test(text)
-    const hasSpiritual = /(spiritual|mallam|juju|sakawa|money ritual|lotto|lottery|native doctor|charm|instant money)/i.test(text)
+    const hasSpiritual = /(spiritual|mallam|juju|sakawa|money ritual|lotto|lottery|native doctor|charm|instant money|double money)/i.test(text)
     const hasPorn = /(porn|xxx|sex video|blue film)/i.test(text)
 
     let shouldDelete = false; let reason = ""
     if (isMedia) {
       if (hasPhone && hasLocation) { shouldDelete = true; reason = "Media with phone + location" }
       else if (hasHookup || hasPorn) { shouldDelete = true; reason = "Hookup/Porn media" }
-      else if (hasSpiritual) { shouldDelete = true; reason = "Spiritual spam on media" }
-      else if (hasDataSell) { shouldDelete = true; reason = "Data selling on media" }
+      else if (hasSpiritual) { shouldDelete = true; reason = "Spiritual spam" }
+      else if (hasDataSell) { shouldDelete = true; reason = "Data selling" }
       else if (hasLink &&!isYoutube) { shouldDelete = true; reason = "Non-tutorial link" }
     } else {
       if (hasLink &&!isYoutube) { shouldDelete = true; reason = "Links (only YouTube allowed)" }
